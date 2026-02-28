@@ -1,236 +1,152 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>电视台监控</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: Arial, sans-serif;
-        }
-        body {
-            width: 100vw;
-            height: 100vh;
-            background: #000;
-            color: #fff;
-            overflow: hidden;
-        }
-
-        /* 管理面板（可关闭） */
-        .admin-panel {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0,0,0,0.95);
-            padding: 25px;
-            border-radius: 10px;
-            border: 1px solid #444;
-            display: none;
-            z-index: 999;
-            flex-direction: column;
-            gap: 15px;
-            width: 320px;
-        }
-        .admin-panel input {
-            padding: 10px;
-            background: #222;
-            color: #fff;
-            border: 1px solid #555;
-            border-radius: 6px;
-            font-size: 16px;
-        }
-        .admin-btn {
-            padding: 10px;
-            background: #0078ff;
-            color: #fff;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        .channel-btn {
-            background: #00b44a;
-            margin: 3px;
-        }
-        .close-btn {
-            background: #ff4444;
-        }
-
-        /* 电视主画面 */
-        .tv-screen {
-            width: 100%;
-            height: 100%;
-            display: block; /* 用户一打开就显示 */
-            position: relative;
-        }
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-        }
-
-        /* 频道号 */
-        .channel-tag {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 22px;
-            font-weight: bold;
-            color: #00ffaa;
-            border: 1px solid #00ffaa;
-        }
-
-        /* 切换提示 */
-        .switch-tip {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: #000;
-            padding: 20px 40px;
-            border: 2px solid #0078ff;
-            border-radius: 10px;
-            font-size: 36px;
-            display: none;
-        }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>公网电视台系统</title>
+<style>
+  body{margin:0;background:#000;color:#fff;font-family:Arial}
+  .tv{width:100vw;height:100vh;position:relative}
+  video{width:100%;height:100%;object-fit:contain}
+  .channel{position:absolute;top:20px;right:20px;background:rgba(0,0,0,.7);padding:10px 16px;border-radius:8px;font-size:22px;color:#0f9}
+  .tip{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#000;padding:20px 40px;border:2px solid #07f;border-radius:10px;font-size:36px;display:none}
+  .admin{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.95);padding:25px;border-radius:10px;display:none;flex-direction:column;gap:12px;width:300px;z-index:999}
+  input{padding:10px;background:#222;color:#fff;border:1px solid #555;border-radius:6px}
+  button{padding:10px;background:#07f;color:#fff;border:none;border-radius:6px;cursor:pointer}
+  .red{background:#f44}
+  .green{background:#0a5}
+</style>
 </head>
 <body>
 
-<!-- 管理面板（可关闭） -->
-<div class="admin-panel" id="adminPanel">
-    <input type="password" id="pwd" placeholder="管理员密码">
-    <button class="admin-btn" onclick="login()">登录</button>
-
-    <div id="channelArea" style="display:none;">
-        <button class="admin-btn channel-btn" onclick="addCamera(1)">添加 1 台</button>
-        <button class="admin-btn channel-btn" onclick="addCamera(2)">添加 2 台</button>
-        <button class="admin-btn channel-btn" onclick="addCamera(3)">添加 3 台</button>
-    </div>
-
-    <button class="admin-btn close-btn" onclick="closeAdmin()">关闭面板</button>
+<div class="admin" id="admin">
+  <input type="password" id="pwd" placeholder="密码">
+  <button onclick="login()">登录</button>
+  <button class="green" onclick="start(1)">开播 1 台</button>
+  <button class="green" onclick="start(2)">开播 2 台</button>
+  <button class="red" onclick="closeAdmin()">关闭</button>
 </div>
 
-<!-- 电视屏幕（用户一打开就显示） -->
-<div class="tv-screen">
-    <video id="video" autoplay muted playsinline></video>
-    <div class="channel-tag" id="channelTag">未开播</div>
-    <div class="switch-tip" id="switchTip"></div>
+<div class="tv">
+  <video id="v" autoplay muted playsinline></video>
+  <div class="channel" id="ch">未开播</div>
+  <div class="tip" id="tip"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/simple-peer@9.11.1/simplepeer.min.js"></script>
 <script>
-// ====================
-// 配置
-// ====================
 const PASSWORD = "123456";
+const ROOM = "tv_room_123"; // 房间号，改了就是新频道
 let isAdmin = false;
-let currentChannel = 0;
-const channels = {}; // 保存频道画面
+let peers = {};
+let streams = {};
+let current = 0;
 
-// ====================
-// 隐藏机关：按 5 次空格打开管理面板
-// ====================
-let spaceCount = 0;
+// 隐藏面板：按 5 次空格打开
+let space = 0;
 document.addEventListener("keydown", e => {
-    if (e.key === " ") {
-        spaceCount++;
-        if (spaceCount >= 5) {
-            document.getElementById("adminPanel").style.display = "flex";
-            spaceCount = 0;
-        }
+  if (e.key === " ") {
+    space++;
+    if (space >= 5) {
+      document.getElementById("admin").style.display = "flex";
+      space = 0;
     }
+  }
+  const n = parseInt(e.key);
+  if ([1,2].includes(n)) switchTo(n);
 });
 
-// ====================
-// 关闭管理面板
-// ====================
 function closeAdmin() {
-    document.getElementById("adminPanel").style.display = "none";
+  document.getElementById("admin").style.display = "none";
 }
 
-// ====================
-// 管理员登录
-// ====================
 function login() {
-    const val = document.getElementById("pwd").value;
-    if (val !== PASSWORD) {
-        alert("密码错误");
-        return;
-    }
+  if (document.getElementById("pwd").value === PASSWORD) {
     isAdmin = true;
-    document.getElementById("channelArea").style.display = "block";
-    alert("登录成功！可添加频道");
+    alert("登录成功");
+  }
 }
 
-// ====================
-// 添加频道摄像头
-// ====================
-async function addCamera(num) {
-    if (!isAdmin) return alert("请先登录");
+// -------------------------
+// 公网核心：WebSocket 中继（免费公共服务器，不存数据）
+// -------------------------
+const socket = new WebSocket("wss://webrtc-signal.deno.dev");
+socket.onopen = () => socket.send(JSON.stringify({join: ROOM}));
 
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 1920, height: 1080 },
-            audio: false
-        });
-        channels[num] = stream;
+// 管理员开播
+async function start(num) {
+  if (!isAdmin) return;
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({
+      video: {width:1920,height:1080}, audio:false
+    });
+    streams[num] = s;
+    switchTo(num);
+    alert(num + " 台已开播");
 
-        // 默认切换到刚添加的频道
-        switchTo(num);
-        alert(num + " 台已添加");
-    } catch (e) {
-        alert("打开摄像头失败：" + e.message);
-    }
+    const p = new SimplePeer({
+      initiator: true, stream: s,
+      iceServers: [
+        {urls:"stun:stun.qq.com"},
+        {urls:"stun:stun.l.google.com:19302"}
+      ]
+    });
+    p.on("signal", sig => {
+      socket.send(JSON.stringify({room:ROOM, from:"host", channel:num, sig}));
+    });
+    peers[num] = p;
+  } catch(e) { alert("失败："+e.message); }
 }
 
-// ====================
-// 切换频道（核心）
-// ====================
+// 切换频道
 function switchTo(num) {
-    if (!channels[num]) {
-        showTip(num + " 台未开播");
-        return;
-    }
-    currentChannel = num;
-    document.getElementById("video").srcObject = channels[num];
-    document.getElementById("channelTag").textContent = "CH-" + num;
-    showTip("切换到 " + num + " 台");
+  current = num;
+  if (streams[num]) {
+    document.getElementById("v").srcObject = streams[num];
+    show("CH-" + num);
+    return;
+  }
+  if (!isAdmin) {
+    show("正在连接 " + num + " 台...");
+    socket.send(JSON.stringify({req: true, room:ROOM, channel:num}));
+  }
 }
 
-// ====================
-// 显示切换提示
-// ====================
-function showTip(text) {
-    const t = document.getElementById("switchTip");
-    t.textContent = text;
-    t.style.display = "block";
-    setTimeout(() => t.style.display = "none", 1200);
-}
+// 观众接收流
+socket.onmessage = e => {
+  const d = JSON.parse(e.data);
+  if (d.channel !== current || isAdmin) return;
 
-// ====================
-// 数字键 1、2、3 切换频道
-// ====================
-document.addEventListener("keydown", e => {
-    const num = parseInt(e.key);
-    if ([1,2,3].includes(num)) {
-        switchTo(num);
-    }
-});
-
-// ====================
-// 用户打开页面自动显示画面
-// ====================
-window.onload = () => {
-    // 自动尝试切1台（普通用户直接看）
-    setTimeout(() => switchTo(1), 500);
+  if (!peers[d.channel]) {
+    const p = new SimplePeer({
+      initiator: false,
+      iceServers: [
+        {urls:"stun:stun.qq.com"},
+        {urls:"stun:stun.l.google.com:19302"}
+      ]
+    });
+    p.on("signal", sig => {
+      socket.send(JSON.stringify({room:ROOM, to:"host", channel:d.channel, sig}));
+    });
+    p.on("stream", s => {
+      document.getElementById("v").srcObject = s;
+      show("CH-" + d.channel);
+    });
+    peers[d.channel] = p;
+  }
+  peers[d.channel].signal(d.sig);
 };
-</script>
 
+function show(text) {
+  const t = document.getElementById("tip");
+  const ch = document.getElementById("ch");
+  t.textContent = text;
+  ch.textContent = text.includes("CH") ? text : "连接中...";
+  t.style.display = "block";
+  setTimeout(()=>t.style.display="none", 1400);
+}
+
+window.onload = () => switchTo(1);
+</script>
 </body>
 </html>
